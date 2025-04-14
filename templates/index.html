@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Run Bash Script</title>
+    <!-- Link the external CSS file -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <!-- Remove the <style> block that was here -->
+</head>
+<body>
+    <h1>Execute Server Script</h1>
+    <p>Select a script and choose whether to run it with sudo privileges.</p>
+
+    <div class="controls">
+        <label for="scriptSelector">Script:</label>
+        <!-- Add the size attribute here (e.g., size="5" to show 5 items) -->
+        <select id="scriptSelector" size="5">
+            {# This block will be populated by Flask using Jinja2 #}
+            {% if scripts %}
+                {% for script in scripts %}
+                    <option value="{{ script }}">{{ script }}</option>
+                {% endfor %}
+            {% else %}
+                <option value="" disabled>No scripts found</option>
+            {% endif %}
+        </select>
+
+        <label for="sudoCheckbox">
+            <input type="checkbox" id="sudoCheckbox"> Run with sudo
+        </label>
+
+        <button id="runButton" {% if not scripts %}disabled{% endif %}>Run Script</button>
+    </div>
+
+    <h2>Output:</h2>
+    <pre id="output">Script output will appear here...</pre>
+
+    <script>
+        const runButton = document.getElementById('runButton');
+        const outputArea = document.getElementById('output');
+        const scriptSelector = document.getElementById('scriptSelector');
+        const sudoCheckbox = document.getElementById('sudoCheckbox');
+        let eventSource = null; // To keep track of the SSE connection
+
+        runButton.addEventListener('click', () => {
+            if (runButton.classList.contains('running')) {
+                console.log("Script is already running.");
+                return; // Prevent multiple clicks
+            }
+
+            const selectedScript = scriptSelector.value;
+            const useSudo = sudoCheckbox.checked;
+
+            if (!selectedScript) {
+                addOutputMessage('error', 'Please select a script.');
+                return;
+            }
+
+            // --- UI Updates ---
+            outputArea.textContent = ''; // Clear previous output
+            // No need to remove classes manually if using CSS for styling messages
+            addOutputMessage('info', `Connecting and starting script: ${selectedScript} (sudo: ${useSudo})...`);
+            runButton.textContent = 'Running...';
+            runButton.disabled = true;
+            runButton.classList.add('running'); // CSS handles the 'running' style
+            scriptSelector.disabled = true;
+            sudoCheckbox.disabled = true;
+
+            // --- Close existing connection if any ---
+            if (eventSource) {
+                eventSource.close();
+            }
+
+            // --- Start SSE Connection ---
+            const params = new URLSearchParams({
+                script: selectedScript,
+                sudo: useSudo
+            });
+            const url = `/run-script?${params.toString()}`;
+            console.log("Requesting URL:", url);
+            eventSource = new EventSource(url);
+
+            eventSource.onopen = function() {
+                addOutputMessage('info', 'Connection established. Waiting for script output...');
+            };
+
+            // --- Handle incoming messages (script output) ---
+            eventSource.onmessage = function(event) {
+                if (event.data === "__SCRIPT_FINISHED__") {
+                    addOutputMessage('info', 'Script execution finished.');
+                    closeConnection();
+                } else if (event.data === "__SCRIPT_ERROR__") {
+                    addOutputMessage('error', 'Script execution failed or server error occurred.');
+                    closeConnection();
+                } else if (event.data.startsWith("__ERROR:")) {
+                    const errorMessage = event.data.substring("__ERROR:".length).trim();
+                    addOutputMessage('error', `Server Error: ${errorMessage}`);
+                    // closeConnection(); // Optional: close on specific errors
+                }
+                else {
+                    const textNode = document.createTextNode(event.data + '\n');
+                    outputArea.appendChild(textNode);
+                    outputArea.scrollTop = outputArea.scrollHeight;
+                }
+            };
+
+            // --- Handle errors (e.g., connection lost) ---
+            eventSource.onerror = function(err) {
+                console.error("EventSource failed:", err);
+                const isFinished = outputArea.textContent.includes('[INFO] Script execution finished.');
+                const isFailed = outputArea.textContent.includes('[ERROR] Script execution failed'); // Check partial message
+
+                if (eventSource && eventSource.readyState === EventSource.CLOSED && !isFinished && !isFailed) {
+                    addOutputMessage('error', 'Connection closed unexpectedly by server or network error.');
+                } else if (eventSource && eventSource.readyState !== EventSource.CLOSED && !isFinished && !isFailed) {
+                     addOutputMessage('error', 'An error occurred with the connection.');
+                }
+                closeConnection();
+            };
+        });
+
+        function closeConnection() {
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+                console.log("EventSource connection closed.");
+            }
+            runButton.textContent = 'Run Script';
+            const hasScripts = scriptSelector.options.length > 0 && !scriptSelector.options[0].disabled;
+            runButton.disabled = !hasScripts; // Disable if no scripts available
+            runButton.classList.remove('running'); // CSS handles the 'running' style
+            scriptSelector.disabled = false;
+            sudoCheckbox.disabled = false;
+        }
+
+        function addOutputMessage(type, message) {
+            const span = document.createElement('span');
+            span.className = type; // 'info' or 'error' - CSS will style these
+            span.appendChild(document.createTextNode(`[${type.toUpperCase()}] ${message}\n`));
+            outputArea.appendChild(span);
+            outputArea.scrollTop = outputArea.scrollHeight;
+        }
+
+        // Initial check to disable button if no scripts on page load
+        document.addEventListener('DOMContentLoaded', () => {
+           const hasScripts = scriptSelector.options.length > 0 && !scriptSelector.options[0].disabled;
+           if (!hasScripts) {
+               runButton.disabled = true;
+           }
+        });
+
+    </script>
+</body>
+</html>
