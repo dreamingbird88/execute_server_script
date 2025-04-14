@@ -2,6 +2,9 @@
 
 This project provides a simple web interface to execute predefined bash scripts on the server where it's hosted.
 
+![Demo](static/demo.png)
+
+
 ## Features
 
 *   Lists available bash scripts from a designated `scripts` directory.
